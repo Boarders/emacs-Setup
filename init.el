@@ -34,6 +34,7 @@
 (global-set-key (kbd "C-c m") 'recompile)
 (global-set-key (kbd "C-c s") 'replace-string)
 (global-unset-key (kbd "C-i"))
+(global-set-key (kbd "<C-return>") 'newline)
 (require 'package)
 ;; make whitespace-mode use just basic coloring
 (set-face-attribute 'whitespace-space nil :background nil :foreground "gray30")
