@@ -1,5 +1,8 @@
 ;; .emacs
 
+;; raise eval depth for things like lean projects
+(setq max-lisp-eval-depth 50000)
+
 ;; Ghostty terminal support - must come very early
 (when (getenv "GHOSTTY_RESOURCES_DIR")
   ;; Ensure proper terminal detection
@@ -20,6 +23,12 @@
 
 ;; Use hunspell for spelling
 (setq ispell-program-name "hunspell")
+;; Configure hunspell dictionaries
+(when (executable-find "hunspell")
+  (setq ispell-really-hunspell t)
+  (setq ispell-local-dictionary-alist
+        '(("en_US" "[[:alpha:]]" "[^[:alpha:]]" "[']" nil ("-d" "en_US") nil utf-8)))
+  (setq ispell-dictionary "en_US"))
 
 ;; Full spell checking for text
 (add-hook 'text-mode-hook #'flyspell-mode)
@@ -64,6 +73,11 @@
   (package-install 'use-package))
 
 (require 'use-package)
+(use-package exec-path-from-shell
+  :ensure t
+  :if (memq window-system '(mac ns x))
+  :config
+  (exec-path-from-shell-initialize))
 (setq use-package-always-ensure nil)  ;; Don't auto-install unless :ensure t is specified
 
 ;; Enable :vc keyword support in use-package (Emacs 29+)
@@ -77,18 +91,17 @@
  ;; If you edit it by hand, you could mess it up, so be careful.
  ;; Your init file should contain only one such instance.
  ;; If there is more than one, they won't work right.
- '(idris2-stay-in-current-window-on-compiler-error t)
  '(inhibit-startup-screen t)
  '(package-selected-packages
-   '(clang-format lsp-mode yasnippet lsp-treemacs helm-lsp projectile
-		  hydra flycheck company avy which-key helm-xref
-		  dap-mode))
+   '(avy clang-format company dap-mode dune exec-path-from-shell flycheck
+	 haskell-mode helm-lsp helm-xref hungry-delete hydra jupyter
+	 lsp-mode lsp-treemacs multiple-cursors projectile
+	 proof-general rust-mode tuareg utop which-key yasnippet))
  '(package-vc-selected-packages
-   '((lean4-mode :url
-		 "https://github.com/leanprover-community/lean4-mode.git")
+   '((claude-code :url "https://github.com/stevemolitor/claude-code.el")
      (monet :url "https://github.com/stevemolitor/monet")
-     (claude-code :url
-		  "https://github.com/stevemolitor/claude-code.el"))))
+     (lean4-mode :url
+		 "https://github.com/leanprover-community/lean4-mode.git"))))
 
 ;; hack to get around weird encoding issue from ghostty sending
 ;; the wrong thing for C-c C-i
@@ -139,20 +152,23 @@
     (save-some-buffers t))
 (add-hook 'focus-out-hook 'save-all)
 
-;; turn on company-mode for programming envs
-(add-hook 'prog-mode-hook 'company-mode)
-
+(use-package company
+  :ensure t
+  :config
+  (setq company-idle-delay 0.0
+        company-minimum-prefix-length 1)
+  :hook (prog-mode . company-mode))
 
 ;; hungry-delete commands
 (global-set-key (kbd "C-c DEL") 'hungry-delete-backward)
 (global-set-key (kbd "C-c <deletechar>") 'hungry-delete-forward)
 
 
-;; multiple cursors set up
-(require 'multiple-cursors)
-;;(global-set-key (kbd "C-j") nil)
-(global-set-key (kbd "C-c e") 'mc/edit-lines)
-
+(use-package multiple-cursors
+  :ensure t
+  :bind (("C-c e" . mc/edit-lines)
+         ("C-c d" . mc/mark-next-like-this)
+         ("C-c r" . mc/mark-all-in-region)))
 
 ;; add key to run makefile in project
 (global-set-key (kbd "C-c m") 'recompile)
@@ -206,8 +222,6 @@
 (setq gc-cons-threshold (* 100 1024 1024)
       read-process-output-max (* 1024 1024)
       treemacs-space-between-root-nodes nil
-      company-idle-delay 0.0
-      company-minimum-prefix-length 1
       lsp-idle-delay 0.1)  ;; clangd is fast
 
 (with-eval-after-load 'lsp-mode
@@ -215,24 +229,39 @@
   (require 'dap-cpptools)
   (yas-global-mode))
 
-;; idris2
-(add-to-list 'load-path "~/.emacs.d/idris2-mode")
-(require 'idris2-mode)
-(setq company-global-modes '(not idris2-mode))
+;; OCaml Setup (Tuareg, LSP, utop, dune)
+(use-package eglot
+  :ensure nil ; Built-in in Emacs 29+
+  :hook (tuareg-mode . eglot-ensure))
 
-;; straight.el bootstrap
-(defvar bootstrap-version)
-(let ((bootstrap-file
-       (expand-file-name "straight/repos/straight.el/bootstrap.el" user-emacs-directory))
-      (bootstrap-version 6))
-  (unless (file-exists-p bootstrap-file)
-    (with-current-buffer
-        (url-retrieve-synchronously
-         "https://raw.githubusercontent.com/radian-software/straight.el/develop/install.el"
-         'silent 'inhibit-cookies)
-      (goto-char (point-max))
-       (eval-print-last-sexp)))
-  (load bootstrap-file nil 'nomessage))
+(use-package tuareg
+  :ensure t
+  :mode ("\\.ml[ily]?\\'" . tuareg-mode)
+  :config
+  (add-hook 'tuareg-mode-hook #'lsp)
+  ;; Add opam emacs site-lisp for ocp-indent
+  (let ((opam-share (ignore-errors
+                      (car (process-lines "opam" "var" "share")))))
+    (when (and opam-share (file-directory-p opam-share))
+      (add-to-list 'load-path (expand-file-name "emacs/site-lisp" opam-share))
+      (require 'ocp-indent))))
+
+;; For utop support (requires: opam install utop)
+(use-package utop
+  :ensure t
+  :config
+  (add-hook 'tuareg-mode-hook #'utop-minor-mode))
+
+;; Dune support
+(use-package dune
+  :ensure t)
+
+;; idris2
+;; (use-package idris2-mode
+;;   :defer t
+;;   :mode ("\\.idr\\'" . idris2-mode)
+;;   :config
+;;   (setq company-global-modes '(not idris2-mode)))
 
 ;; lean4
 (use-package lean4-mode
